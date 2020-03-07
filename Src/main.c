@@ -47,6 +47,12 @@
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
+enum {
+TRANSFER_READY,
+TRANSFER_WAIT,
+TRANSFER_COMPLETE,
+TRANSFER_ERROR
+};
 
 /* USER CODE END PM */
 
@@ -63,6 +69,11 @@ UART_HandleTypeDef huart2;
 UART_HandleTypeDef huart6;
 
 /* USER CODE BEGIN PV */
+//uint8_t SPI_buffer_tx[10]={61, 62, 63, 64, 65, 66, 67, 68, 69, 70};
+//uint8_t SPI_buffer_rx[10] = {0,};
+/* transfer state */
+__IO uint32_t wTransferState = TRANSFER_READY;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -102,6 +113,11 @@ static void MX_TIM1_Init(void);
     return len;
   }
 #endif
+void Clear_SPI_CR2_SSOE(SPI_HandleTypeDef *hspi);
+void Clear_SPI_MasterEnable(SPI_HandleTypeDef *hspi)
+{
+  SET_BIT(hspi->Instance->CR1, SPI_CR1_MSTR|SPI_CR1_SPE);
+}
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -111,8 +127,18 @@ uart_buffer uart_6;
 
 void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi)
 {
-  //
+  //while(1);
+  printf(" HAL_SPI_TxRxCpltCallback  \r\n");
+  //CLEAR_BIT(hspi->Instance->CR2, SPI_CR2_TXDMAEN | SPI_CR2_RXDMAEN | SPI_CR2_SSOE);
+  //SET_BIT(hspi->Instance->CR2, SPI_CR2_SSOE);
+  wTransferState = TRANSFER_COMPLETE;
 }
+void HAL_SPI_ErrorCallback(SPI_HandleTypeDef *hspi)
+{
+  printf(" HAL_SPI_ERROR \r\n");
+  wTransferState = TRANSFER_ERROR;
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -129,6 +155,7 @@ int main(void)
   uint8_t rxData;
   int temp_uart_index = 0;
   uint8_t temp_cmd = 0;
+  uint8_t cmd_code = 0;;
   /* USER CODE END 1 */
   
 
@@ -145,9 +172,7 @@ int main(void)
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
-  HAL_MspInit();
-  HAL_SPI_MspInit(&hspi1);
-
+  
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
@@ -166,9 +191,15 @@ int main(void)
   //memcpy(SPI_buffer_tx, temp_data, 10);
   //HAL_SPI_TransmitReceive_DMA(&hspi1, SPI_buffer_tx, SPI_buffer_tx, 10);
 
+  HAL_MspInit();
+  HAL_SPI_MspInit(&hspi1);
+  __HAL_SPI_ENABLE(&hspi1);
+  //HAL_SPI_Receive_DMA_INIT(&hspi1,SPI_buffer_rx,2);
+
   HAL_UART_Receive_IT(&huart2, &rxData, 1);
   HAL_UART_Receive_IT(&huart6, &rxData, 1);
-
+  //HAL_SPI_TransmitReceive_DMA(&hspi1, SPI_buffer_tx, SPI_buffer_rx, 2);
+  //Clear_SPI_CR2_SSOE(&hspi1);
   
   /* USER CODE END 2 */
  
@@ -208,14 +239,96 @@ int main(void)
 		{	//send
 			SPI_buffer_tx[0] = SPI_REG_INT_STTS;
 			SPI_buffer_tx[1] = 0xff;
-			HAL_SPI_TransmitReceive_DMA(&hspi1, SPI_buffer_tx, SPI_buffer_rx, 2);
-			printf("spi1 tx:%02x rx:%02x \r\n", SPI_REG_INT_STTS, SPI_buffer_rx[1]);
+			SPI_buffer_rx[2] = 0x00;
+			cmd_code = SPI_REG_INT_STTS;
+			wTransferState = TRANSFER_WAIT;
+			if(HAL_SPI_TransmitReceive_DMA(&hspi1, SPI_buffer_tx, SPI_buffer_rx, 3) != HAL_OK)
+			{
+				Error_Handler();
+			}
+			//Clear_SPI_CR2_SSOE(&hspi1);
+			#if 0
+			printf("spi1 tx:%02x rx:%02x%02x \r\n", SPI_buffer_tx[0], SPI_buffer_rx[2], SPI_buffer_rx[1]);
 			if(SPI_buffer_rx[1] == 0x01)
 			{
 				printf("stts = %02x\r\n", SPI_buffer_rx[1]);
 			}
-			printf("_spi1 tx:%02x rx:%02x \r\n", SPI_REG_INT_STTS, SPI_buffer_rx[1]);
+			printf("_spi1 tx:%02x rx:%02x%02x \r\n", SPI_REG_INT_STTS, SPI_buffer_rx[2], SPI_buffer_rx[1]);
+			Clear_SPI_MasterEnable(&hspi1);
+			#endif
 		}
+		else if(strncmp(temp_uart_buffer,"tbav",4) == 0)
+		{	//send
+			SPI_buffer_tx[0] = SPI_REG_TX_BUFF_AVAIL;
+			SPI_buffer_tx[1] = 0xff;
+			SPI_buffer_rx[2] = 0x00;
+			cmd_code = SPI_REG_TX_BUFF_AVAIL;
+			wTransferState = TRANSFER_WAIT;
+			if(HAL_SPI_TransmitReceive_DMA(&hspi1, SPI_buffer_tx, SPI_buffer_rx, 3) != HAL_OK)
+			{
+				Error_Handler();
+			}
+			//Clear_SPI_CR2_SSOE(&hspi1);
+			#if 0
+			printf("spi1 tx:%02x rx:%02x%02x \r\n", SPI_buffer_tx[0], SPI_buffer_rx[2], SPI_buffer_rx[1]);
+			if(SPI_buffer_rx[1] & 0x02)
+			{
+				printf("BUFF AVAIL = %02x\r\n", SPI_buffer_rx[1]);
+			}
+			printf("_spi1 tx:%02x rx:%02x%02x \r\n", SPI_REG_TX_BUFF_AVAIL, SPI_buffer_rx[2], SPI_buffer_rx[1]);
+			#endif
+		}
+		else if(strncmp(temp_uart_buffer,"rlen",4) == 0)
+		{	//send
+			SPI_buffer_tx[0] = SPI_REG_RX_DAT_LEN;
+			SPI_buffer_tx[1] = 0xff;
+			SPI_buffer_rx[2] = 0x00;
+			cmd_code = SPI_REG_RX_DAT_LEN;
+			wTransferState = TRANSFER_WAIT;
+			if(HAL_SPI_TransmitReceive_DMA(&hspi1, SPI_buffer_tx, SPI_buffer_rx, 3) != HAL_OK)
+			{
+				Error_Handler();
+			}
+			
+			//Clear_SPI_CR2_SSOE(&hspi1);
+			#if 0
+			printf("spi1 tx:%02x rx:%02x%02x \r\n", SPI_buffer_tx[0], SPI_buffer_rx[2], SPI_buffer_rx[1]);
+			if((SPI_buffer_rx[2]<<8 |(SPI_buffer_rx[1]&0x00FF)) > 0 )
+			{
+				printf("Recv len = %02x%02x\r\n", SPI_buffer_rx[2], SPI_buffer_rx[1]);
+			}
+			printf("_spi1 tx:%02x rx:%02x%02x \r\n", SPI_REG_RX_DAT_LEN, SPI_buffer_rx[2], SPI_buffer_rx[1]);
+			Clear_SPI_MasterEnable(&hspi1);
+			#endif
+		}
+	}
+	switch(wTransferState)
+	{
+		case TRANSFER_READY:
+			break;
+		case TRANSFER_ERROR:
+			printf("SPI ERROR\r\n");
+			wTransferState = TRANSFER_READY;
+			break;
+		case TRANSFER_COMPLETE:
+			printf("spi1 tx:%02x rx:%02x%02x \r\n", cmd_code, SPI_buffer_rx[2], SPI_buffer_rx[1]);
+			wTransferState = TRANSFER_READY;
+			#if 0
+			switch(cmd_code)
+			{
+				case SPI_REG_INT_STTS:
+					break;
+				case SPI_REG_TX_BUFF_AVAIL:
+					break;
+				case SPI_REG_RX_DAT_LEN:
+					break;
+			}
+			#endif
+			break;
+		case TRANSFER_WAIT:
+			break;
+		default :
+			break;
 	}
 	
     /* USER CODE END WHILE */
@@ -546,6 +659,12 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+void Clear_SPI_CR2_SSOE(SPI_HandleTypeDef *hspi)
+{
+  CLEAR_BIT(hspi->Instance->CR2, SPI_CR2_SSOE);
+  SET_BIT(hspi->Instance->CR2, SPI_CR2_SSOE);
+
+}
 
 void uart2_enqueue(char data)
 {
